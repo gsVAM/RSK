@@ -1,5 +1,6 @@
 import csv
 import scipy as sp
+from functools import reduce
 
 def is_numeric(entry):
     try:
@@ -23,13 +24,14 @@ class PanelSeries:
             for panel in panels:
                 panel.time = float(panel.time)
 
+        # sort panel by time variable
         self.data = sorted([(panel.time, panel) for panel in panels], key=lambda x: x[0])
         self.times = [time for time,panel in self.data]
         self.variable_names = variable_names
 
         # verify that we have balanced individuals
-        groups = [group.name for group in panels[0].data]
-        if not all([groups == [group.name for group in panel.data] for panel in panels]):
+        groups = [group.name for group in self.data[0][1].data]
+        if not all([groups == [group.name for group in panel.data] for (_,panel) in self.data]):
             raise ValueError("Currently, all panels must have the same members in the same order.")
         self.groups = groups
 
@@ -37,22 +39,31 @@ class PanelSeries:
         # compute group masks and check variables
         #
         group_counts_mask = []
-        _, n_vars = panels[0].data[0].data.shape
+        _, n_vars = self.data[0][1].data[0].data.shape
         self.n_variables = n_vars
-        for panel in panels:
-            group_sizes = [group.data.shape[0] for group in panel.data]
-            var_counts = [group.data.shape[1] for group in panel.data]
+        for (time,panel) in self.data:
+            group_sizes = [group.size for group in panel.data]
+            var_counts = [group.n_vars for group in panel.data]
             if not all([v==n_vars for v in var_counts]):
                 raise ValueError("Must have same number of variables for each individual!")
             group_counts_mask.append(sp.diag(group_sizes))
         self.group_counts_mask = group_counts_mask
+
+    def mean(self):
+        '''
+        Compute mean over entire panel series
+        :return: vector of means
+        '''
+        pairs = [(panel.size(), panel.sum()) for _, panel in self.data]
+        totals = reduce(lambda x,y: (x[0]+y[0], x[1] + y[1]), pairs)
+        return totals[1]/totals[0]
 
     def means(self):
         '''
         compute group means matrix (n_groups x n_vars)
         :return: list of matrices by (n_groups x n_vars)
         '''
-        return [panel.means() for t,panel in self.data]
+        return [panel.means() for _, panel in self.data]
 
     def cov(self):
         '''
@@ -141,6 +152,8 @@ class Group:
             self.data = sp.array(observations)
         else:
             self.data = observations
+        self.size = self.data.shape[0]
+        self.n_vars = self.data.shape[1]
 
     def mean(self):
         return sp.mean(self.data, axis=0)
@@ -169,6 +182,15 @@ class Panel:
         '''
         self.time = time
         self.data = sorted(groups, key=lambda x: x.name)
+
+    def size(self):
+        return sum([group.size for group in self.data])
+
+    def sum(self):
+        return sum([group.mean()*group.size for group in self.data])
+
+    def mean(self):
+        return self.sum()/self.size()
 
     def means(self):
         return sp.vstack([group.mean() for group in self.data])
